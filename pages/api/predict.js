@@ -4,9 +4,10 @@ export default async function handler(req, res) {
   }
 
   const token = process.env.GITHUB_TOKEN;
+  const endpoint = "https://models.inference.ai.azure.com";
 
   try {
-    const response = await fetch('https://models.inference.ai.azure.com/chat/completions', {
+    const response = await fetch(`${endpoint}/chat/completions`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${token}`,
@@ -15,17 +16,46 @@ export default async function handler(req, res) {
       body: JSON.stringify({
         messages: [
           {
-            role: 'user',
-            content: `Based on these lottery numbers from the past days: ${JSON.stringify(req.body.pastNumbers)}, predict the next winning numbers for: 1st prize (1 number), 2nd prize (1 number), 3rd prize (1 number), special prize (10 numbers), and consolation prize (10 numbers). Return only the numbers in JSON format.`
+            role: "system",
+            content: "You are a lottery number prediction expert. Analyze patterns and provide predictions in JSON format. Only respond with valid JSON, no markdown or other text."
+          },
+          {
+            role: "user",
+            content: `Based on these lottery numbers from the past days: ${JSON.stringify(req.body.pastNumbers)}, predict the next winning numbers. Respond only with a JSON object in this exact format, nothing else: { "firstPrize": "XXXX", "secondPrize": "XXXX", "thirdPrize": "XXXX", "specialPrize": ["XXXX", "XXXX", "XXXX", "XXXX", "XXXX", "XXXX", "XXXX", "XXXX", "XXXX", "XXXX"], "consolationPrize": ["XXXX", "XXXX", "XXXX", "XXXX", "XXXX", "XXXX", "XXXX", "XXXX", "XXXX", "XXXX"] }`
           }
         ],
-        model: 'o1-preview'
+        temperature: 0.7,
+        max_tokens: 1000,
+        model: "gpt-4o"
       })
     });
 
+    if (!response.ok) {
+      throw new Error(`API call failed with status: ${response.status}`);
+    }
+
     const data = await response.json();
-    res.status(200).json(data);
+    
+    try {
+      // The model might include markdown formatting, so let's try to extract just the JSON
+      const content = data.choices[0].message.content;
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      const jsonString = jsonMatch ? jsonMatch[0] : content;
+      const prediction = JSON.parse(jsonString);
+      res.status(200).json(prediction);
+    } catch (parseError) {
+      console.error('Parse error:', parseError);
+      res.status(500).json({ 
+        error: 'Failed to parse prediction',
+        details: parseError.message,
+        rawContent: data.choices[0].message.content 
+      });
+    }
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('Prediction error:', error);
+    res.status(500).json({ 
+      error: 'Failed to generate prediction',
+      details: error.message 
+    });
   }
-} 
+}
